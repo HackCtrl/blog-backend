@@ -8,7 +8,7 @@ from app.utils.security import (
     verify_password,
     create_access_token
 )
-from app.database import get_db
+from config.database import get_db
 
 router = APIRouter(tags=["Authentication"])
 
