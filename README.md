@@ -483,3 +483,499 @@ DATABASE_URL=postgresql://postgres:ваш_пароль@localhost:5432/blog_backe
 - Безопасная система аутентификации администраторов
 - Админ-панель для управления статьями
 - Готовое к интеграции API
+
+
+
+
+
+Подробное руководство по работе с Git и структуре проекта
+Работа с Git для команды
+1. Начальная настройка репозитория
+Клонирование репозитория (делает один человек, затем добавляет других как collaborators):
+
+Copy
+git clone https://github.com/ваш-аккаунт/blog-backend.git
+cd blog-backend
+Настройка пользователя (каждый разработчик делает на своем компьютере):
+
+Copy
+git config --global user.name "Ваше Имя"
+git config --global user.email "ваш@email.com"
+2. Просмотр существующих веток
+Посмотреть все ветки (локальные и удаленные):
+
+Copy
+git branch -a
+Посмотреть только локальные ветки:
+
+Copy
+git branch
+Посмотреть последние коммиты в ветках:
+
+Copy
+git log --oneline --graph --all
+3. Удаление веток
+Удаление локальной ветки:
+
+Copy
+git branch -d имя_ветки  # безопасное удаление (если изменения слиты)
+git branch -D имя_ветки  # принудительное удаление (если изменения не слиты)
+Удаление удаленной ветки:
+
+Copy
+git push origin --delete имя_ветки
+Синхронизация списка веток после удаления на удаленном репозитории:
+
+Copy
+git fetch --prune
+4. Рабочий процесс для каждого разработчика
+Для разработчика 1 (База данных и инфраструктура):
+Создание ветки:
+
+Copy
+git checkout main
+git pull origin main
+git checkout -b feature/database-setup
+Структура файлов:
+
+Copy
+blog-backend/
+├── config/
+│   └── database.py
+├── requirements.txt
+└── README.md
+Содержимое файлов:
+
+config/database.py:
+
+python
+Copy
+import psycopg2
+from psycopg2 import OperationalError
+
+def create_connection():
+    try:
+        connection = psycopg2.connect(
+            database="blog_backend",
+            user="postgres",
+            password="ваш_пароль",
+            host="localhost",
+            port="5432"
+        )
+        return connection
+    except OperationalError as e:
+        print(f"The error '{e}' occurred")
+        return None
+requirements.txt:
+
+Copy
+flask
+flask-sqlalchemy
+psycopg2-binary
+bcrypt
+python-dotenv
+Коммит изменений:
+
+Copy
+git add .
+git commit -m "Настройка базы данных и подключения"
+git push origin feature/database-setup
+Для разработчика 2 (Аутентификация):
+Создание ветки:
+
+Copy
+git checkout main
+git pull origin main
+git checkout -b feature/auth-system
+Структура файлов:
+
+Copy
+blog-backend/
+├── auth/
+│   ├── __init__.py
+│   ├── auth.py
+│   └── utils.py
+├── models/
+│   └── user.py
+└── .env
+Содержимое файлов:
+
+auth/utils.py:
+
+python
+Copy
+import bcrypt
+
+def hash_password(password: str) -> str:
+    salt = bcrypt.gensalt()
+    hashed = bcrypt.hashpw(password.encode('utf-8'), salt)
+    return hashed.decode('utf-8')
+
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    return bcrypt.checkpw(
+        plain_password.encode('utf-8'),
+        hashed_password.encode('utf-8')
+    )
+models/user.py:
+
+python
+Copy
+from config.database import create_connection
+from auth.utils import hash_password
+
+class User:
+    @staticmethod
+    def create(email: str, username: str, password: str):
+        hashed_password = hash_password(password)
+        connection = create_connection()
+        cursor = connection.cursor()
+        
+        try:
+            cursor.execute(
+                "INSERT INTO users (email, username, password) VALUES (%s, %s, %s) RETURNING id",
+                (email, username, hashed_password)
+            )
+            user_id = cursor.fetchone()[0]
+            connection.commit()
+            return user_id
+        except Exception as e:
+            connection.rollback()
+            raise e
+        finally:
+            cursor.close()
+            connection.close()
+
+    @staticmethod
+    def get_by_email(email: str):
+        connection = create_connection()
+        cursor = connection.cursor()
+        
+        try:
+            cursor.execute("SELECT * FROM users WHERE email = %s", (email,))
+            user = cursor.fetchone()
+            return user
+        finally:
+            cursor.close()
+            connection.close()
+auth/auth.py:
+
+python
+Copy
+from flask import jsonify, request
+from models.user import User
+from auth.utils import verify_password
+import jwt
+import datetime
+from functools import wraps
+import os
+
+def login():
+    data = request.get_json()
+    email = data.get('email')
+    password = data.get('password')
+    
+    user = User.get_by_email(email)
+    if not user or not verify_password(password, user[3]):
+        return jsonify({'message': 'Invalid credentials'}), 401
+    
+    token = jwt.encode({
+        'user_id': user[0],
+        'exp': datetime.datetime.utcnow() + datetime.timedelta(hours=24)
+    }, os.getenv('SECRET_KEY'), algorithm='HS256')
+    
+    return jsonify({'token': token})
+
+def token_required(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        token = request.headers.get('Authorization')
+        if not token:
+            return jsonify({'message': 'Token is missing'}), 403
+        
+        try:
+            data = jwt.decode(token, os.getenv('SECRET_KEY'), algorithms=['HS256'])
+            current_user = User.get_by_id(data['user_id'])
+        except:
+            return jsonify({'message': 'Token is invalid'}), 403
+        
+        return f(current_user, *args, **kwargs)
+    return decorated
+Коммит изменений:
+
+Copy
+git add .
+git commit -m "Реализация системы аутентификации"
+git push origin feature/auth-system
+Для разработчика 3 (CRUD для статей):
+Создание ветки:
+
+Copy
+git checkout main
+git pull origin main
+git checkout -b feature/article-crud
+Структура файлов:
+
+Copy
+blog-backend/
+├── models/
+│   └── article.py
+├── controllers/
+│   └── article_controller.py
+├── utils/
+│   └── file_upload.py
+└── app.py
+Содержимое файлов:
+
+models/article.py:
+
+python
+Copy
+from config.database import create_connection
+from datetime import datetime
+
+class Article:
+    @staticmethod
+    def create(title: str, content: str, image_url: str = None):
+        connection = create_connection()
+        cursor = connection.cursor()
+        
+        try:
+            cursor.execute(
+                """INSERT INTO articles (title, content, image_url) 
+                VALUES (%s, %s, %s) RETURNING id""",
+                (title, content, image_url)
+            )
+            article_id = cursor.fetchone()[0]
+            connection.commit()
+            return article_id
+        except Exception as e:
+            connection.rollback()
+            raise e
+        finally:
+            cursor.close()
+            connection.close()
+
+    @staticmethod
+    def get_all(include_hidden=False):
+        connection = create_connection()
+        cursor = connection.cursor()
+        
+        try:
+            if include_hidden:
+                cursor.execute("SELECT * FROM articles ORDER BY created_at DESC")
+            else:
+                cursor.execute("SELECT * FROM articles WHERE is_hidden = FALSE ORDER BY created_at DESC")
+            return cursor.fetchall()
+        finally:
+            cursor.close()
+            connection.close()
+
+    @staticmethod
+    def update(article_id: int, title: str, content: str, image_url: str = None):
+        connection = create_connection()
+        cursor = connection.cursor()
+        
+        try:
+            cursor.execute(
+                """UPDATE articles 
+                SET title = %s, content = %s, image_url = %s, updated_at = %s 
+                WHERE id = %s""",
+                (title, content, image_url, datetime.now(), article_id)
+            )
+            connection.commit()
+        except Exception as e:
+            connection.rollback()
+            raise e
+        finally:
+            cursor.close()
+            connection.close()
+
+    @staticmethod
+    def toggle_visibility(article_id: int):
+        connection = create_connection()
+        cursor = connection.cursor()
+        
+        try:
+            cursor.execute(
+                """UPDATE articles 
+                SET is_hidden = NOT is_hidden, updated_at = %s 
+                WHERE id = %s""",
+                (datetime.now(), article_id)
+            )
+            connection.commit()
+        except Exception as e:
+            connection.rollback()
+            raise e
+        finally:
+            cursor.close()
+            connection.close()
+
+    @staticmethod
+    def delete(article_id: int):
+        connection = create_connection()
+        cursor = connection.cursor()
+        
+        try:
+            cursor.execute("DELETE FROM articles WHERE id = %s", (article_id,))
+            connection.commit()
+        except Exception as e:
+            connection.rollback()
+            raise e
+        finally:
+            cursor.close()
+            connection.close()
+controllers/article_controller.py:
+
+python
+Copy
+from flask import jsonify, request
+from models.article import Article
+from auth.auth import token_required
+import bleach
+
+def init_article_routes(app):
+    @app.route('/api/articles', methods=['GET'])
+    def get_articles():
+        articles = Article.get_all()
+        return jsonify([{
+            'id': article[0],
+            'title': article[1],
+            'content': article[2],
+            'image_url': article[3],
+            'created_at': article[5]
+        } for article in articles])
+
+    @app.route('/api/articles', methods=['POST'])
+    @token_required
+    def create_article(current_user):
+        data = request.get_json()
+        
+        # Очистка от потенциальных XSS-атак
+        title = bleach.clean(data.get('title'))
+        content = bleach.clean(data.get('content'))
+        image_url = data.get('image_url')
+        
+        article_id = Article.create(title, content, image_url)
+        return jsonify({'message': 'Article created', 'id': article_id}), 201
+
+    @app.route('/api/articles/<int:article_id>', methods=['PUT'])
+    @token_required
+    def update_article(current_user, article_id):
+        data = request.get_json()
+        
+        title = bleach.clean(data.get('title'))
+        content = bleach.clean(data.get('content'))
+        image_url = data.get('image_url')
+        
+        Article.update(article_id, title, content, image_url)
+        return jsonify({'message': 'Article updated'})
+
+    @app.route('/api/articles/<int:article_id>/toggle', methods=['PUT'])
+    @token_required
+    def toggle_article(current_user, article_id):
+        Article.toggle_visibility(article_id)
+        return jsonify({'message': 'Article visibility toggled'})
+
+    @app.route('/api/articles/<int:article_id>', methods=['DELETE'])
+    @token_required
+    def delete_article(current_user, article_id):
+        Article.delete(article_id)
+        return jsonify({'message': 'Article deleted'})
+app.py:
+
+python
+Copy
+from flask import Flask
+from config.database import create_connection
+from auth.auth import login
+from controllers.article_controller import init_article_routes
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+app = Flask(__name__)
+app.config['SECRET_KEY'] = os.getenv('SECRET_KEY')
+app.config['UPLOAD_FOLDER'] = 'uploads'
+
+# Инициализация маршрутов
+app.route('/api/login', methods=['POST'])(login)
+init_article_routes(app)
+
+if __name__ == '__main__':
+    # Проверка подключения к БД
+    conn = create_connection()
+    if conn:
+        print("Successfully connected to the database")
+        conn.close()
+    else:
+        print("Failed to connect to the database")
+    
+    app.run(debug=True)
+Коммит изменений:
+
+Copy
+git add .
+git commit -m "Реализация CRUD для статей и админ-панели"
+git push origin feature/article-crud
+5. Слияние веток в main
+После того как все разработчики завершили свои задачи:
+
+Переключиться на main ветку и обновить ее:
+
+Copy
+git checkout main
+git pull origin main
+Слить ветку разработчика 1:
+
+Copy
+git merge feature/database-setup
+Слить ветку разработчика 2:
+
+Copy
+git merge feature/auth-system
+Слить ветку разработчика 3:
+
+Copy
+git merge feature/article-crud
+Если возникли конфликты, разрешить их и сделать коммит:
+
+Copy
+git add .
+git commit -m "Разрешение конфликтов при слиянии"
+Отправить изменения на удаленный репозиторий:
+
+Copy
+git push origin main
+Удалить ненужные ветки (после успешного слияния):
+
+Copy
+git branch -d feature/database-setup
+git branch -d feature/auth-system
+git branch -d feature/article-crud
+git push origin --delete feature/database-setup
+git push origin --delete feature/auth-system
+git push origin --delete feature/article-crud
+Итоговая структура проекта
+После слияния всех веток структура проекта будет выглядеть так:
+
+Copy
+blog-backend/
+├── auth/
+│   ├── __init__.py
+│   ├── auth.py
+│   └── utils.py
+├── config/
+│   └── database.py
+├── controllers/
+│   └── article_controller.py
+├── models/
+│   ├── article.py
+│   └── user.py
+├── utils/
+│   └── file_upload.py
+├── .env
+├── app.py
+├── requirements.txt
+└── README.md
+Все файлы должны содержать именно тот код, который указан выше для каждого разработчика. При таком подходе после слияния все компоненты будут работать вместе без ошибок.
